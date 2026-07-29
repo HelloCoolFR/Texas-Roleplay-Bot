@@ -170,7 +170,7 @@ app.post('/verify_user', async (req, res) => {
 // ENDPOINT: Move User
 // Roblox calls this to drag a player into a specific ProxVoc room
 app.post('/move_user', async (req, res) => {
-    const { username, targetChannelName } = req.body;
+    const { username, targetChannelName, mute } = req.body;
     if (!username || !targetChannelName) return res.status(400).json({ success: false });
 
     const result = await findMember(username);
@@ -190,10 +190,17 @@ app.post('/move_user', async (req, res) => {
         await member.voice.setChannel(targetChannel);
         console.log(`[API] Moved ${username} into ${targetChannelName}`);
         
+        // Handle Mute
+        if (mute === true) {
+            await member.voice.setMute(true, "Alone in proximity chat");
+        } else if (mute === false) {
+            await member.voice.setMute(false, "Joined proximity chat");
+        }
+        
         return res.json({ success: true });
     } catch (err) {
-        console.log(`[API Error] Failed to move user:`, err);
-        return res.json({ success: false, error: "Failed to move user." });
+        console.log(`[API Error] Failed to move/mute user:`, err);
+        return res.json({ success: false, error: "Failed to move/mute user." });
     }
 });
 
