@@ -82,6 +82,29 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// Enforce Muting rules globally
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    if (newState.channel) {
+        if (newState.channel.name === WAITING_ROOM_NAME) {
+            if (!newState.serverMute) {
+                try {
+                    await newState.setMute(true, "Always mute in Waiting Room");
+                } catch (e) {
+                    console.log("Failed to mute user in waiting room:", e);
+                }
+            }
+        } else {
+            if (newState.serverMute) {
+                try {
+                    await newState.setMute(false, "Left Waiting Room");
+                } catch (e) {
+                    console.log("Failed to unmute user:", e);
+                }
+            }
+        }
+    }
+});
+
 // Helper function to find a member by username or display name across all guilds
 async function findMember(usernameInput) {
     usernameInput = usernameInput.toLowerCase();
