@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
@@ -193,6 +194,28 @@ app.post('/move_user', async (req, res) => {
     } catch (err) {
         console.log(`[API Error] Failed to move user:`, err);
         return res.json({ success: false, error: "Failed to move user." });
+    }
+});
+
+// ENDPOINT: Get Waiting Players
+app.post('/waiting_players', async (req, res) => {
+    try {
+        let players = [];
+        for (const [guildId, guild] of client.guilds.cache) {
+            const channel = guild.channels.cache.find(c => c.name === WAITING_ROOM_NAME && c.type === ChannelType.GuildVoice);
+            if (channel) {
+                channel.members.forEach(m => {
+                    if (m.user.username) players.push(m.user.username);
+                    if (m.user.globalName && m.user.globalName !== m.user.username) players.push(m.user.globalName);
+                    if (m.nickname) players.push(m.nickname);
+                });
+            }
+        }
+        players = [...new Set(players)]; // Unique
+        return res.json({ success: true, players: players });
+    } catch (err) {
+        console.log(`[API Error] Failed to fetch waiting players:`, err);
+        return res.json({ success: false, error: "Failed to fetch players." });
     }
 });
 
