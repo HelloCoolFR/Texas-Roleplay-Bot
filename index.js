@@ -82,8 +82,23 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Enforce Muting rules globally
+// Enforce Muting rules globally and cleanup
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    // 1. Cleanup old channel if it's a ProxVoc and it's empty
+    if (oldState.channel && (!newState.channel || oldState.channel.id !== newState.channel.id)) {
+        if (oldState.channel.name.startsWith('ProxVoc')) {
+            if (oldState.channel.members.size === 0) {
+                try {
+                    await oldState.channel.delete("Empty proximity channel cleanup");
+                    console.log(`[Bot] Deleted empty channel: ${oldState.channel.name}`);
+                } catch (e) {
+                    console.log("Failed to delete empty channel:", e);
+                }
+            }
+        }
+    }
+
+    // 2. Enforce Muting
     if (newState.channel) {
         if (newState.channel.name === WAITING_ROOM_NAME) {
             if (!newState.serverMute) {
@@ -224,6 +239,32 @@ app.post('/move_user', async (req, res) => {
     } catch (err) {
         console.log(`[API Error] Failed to move/mute user:`, err);
         return res.json({ success: false, error: "Failed to move/mute user." });
+    }
+});
+
+// ENDPOINT: Rename Channel
+app.post('/rename_channel', async (req, res) => {
+    const { oldChannelName, newChannelName } = req.body;
+    if (!oldChannelName || !newChannelName) return res.status(400).json({ success: false });
+
+    try {
+        let found = false;
+        for (const [guildId, guild] of client.guilds.cache) {
+            const channel = guild.channels.cache.find(c => c.name === oldChannelName && c.type === ChannelType.GuildVoice);
+            if (channel) {
+                await channel.setName(newChannelName, "Dynamic group rename");
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            return res.json({ success: true });
+        } else {
+            return res.json({ success: false, error: "Channel not found" });
+        }
+    } catch (err) {
+        console.log(`[API Error] Failed to rename channel:`, err);
+        return res.json({ success: false, error: "Failed to rename channel." });
     }
 });
 
