@@ -232,7 +232,8 @@ client.on('messageCreate', async (message) => {
                 message.reply(`📥 Downloaded and added to queue: **${title}**`);
 
                 // If nothing is playing, start immediately
-                if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+                const player = ensureAudioPlayer(guildId, musicData);
+                if (player.state.status === AudioPlayerStatus.Idle) {
                     playNext(guildId);
                 }
             } catch (err) {
@@ -286,7 +287,8 @@ client.on('messageCreate', async (message) => {
         message.reply(`➕ Added to queue: **${title}**`);
 
         // If nothing is currently playing, start immediately
-        if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+        const player = ensureAudioPlayer(guildId, musicData);
+        if (player.state.status === AudioPlayerStatus.Idle) {
             playNext(guildId);
         }
     }
@@ -362,7 +364,8 @@ client.on('messageCreate', async (message) => {
             });
 
             // If nothing is playing, play immediately
-            if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+            const player = ensureAudioPlayer(guildId, musicData);
+            if (player.state.status === AudioPlayerStatus.Idle) {
                 playNext(guildId);
             }
         });
