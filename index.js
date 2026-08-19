@@ -162,6 +162,17 @@ async function playRadioNext(guildId) {
 
         radioState.connection.subscribe(radioState.player);
         console.log(`[Radio] Now playing: ${title} in guild ${guildId}`);
+
+        // Rename the channel to the name of the MP3
+        const guild = client.guilds.cache.get(guildId);
+        if (guild && radioState.connection) {
+            const channelId = radioState.connection.joinConfig.channelId;
+            const channel = guild.channels.cache.get(channelId);
+            if (channel) {
+                // Prepend a radio emoji and clean title
+                await channel.setName(`📻 ${title.slice(0, 80)}`, "Update playing song status");
+            }
+        }
     } catch (err) {
         console.error(`[Radio] Failed to play track ${title}:`, err);
         playRadioNext(guildId);
@@ -204,6 +215,12 @@ async function checkRadioAutoJoinLeave(guild, voiceChannel) {
             if (radioState.player) {
                 radioState.player.stop();
                 radioState.player = null;
+            }
+            try {
+                // Restore channel name back to default
+                await voiceChannel.setName(RADIO_CHANNEL_NAME, "Restore default channel name");
+            } catch (e) {
+                console.error("Failed to restore default channel name:", e);
             }
             radioState.connection.destroy();
             radioState.connection = null;
