@@ -15,8 +15,16 @@ cd "c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla\discord_bot"
 ### Step 2: Add your MP3 files
 Drop any new `.mp3` files you want into the `discord_bot/my_music/` directory.
 
-### Step 3: Git Command Steps
+### Alternative: Download Directly from YouTube
+You can download music directly from YouTube as an `.mp3` file inside your local `my_music` folder using the custom Python script:
 
+```bash
+python download_music.py "https://www.youtube.com/watch?v=..."
+```
+
+---
+
+### Step 4: Git Command Steps
 1. **Stage all changes** (adds new MP3 files and tracks them):
    ```bash
    git add my_music/
@@ -34,7 +42,7 @@ Drop any new `.mp3` files you want into the `discord_bot/my_music/` directory.
 
 ---
 
-### Step 4: Verification
+### Step 5: Verification
 Render.com will automatically detect the push and redeploy the bot (takes about 1-2 minutes).
 - Once deployed, type `!version` to confirm the bot is active.
 - The new tracks will automatically be indexed into the continuous radio rotation!

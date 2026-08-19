@@ -7,21 +7,34 @@ import subprocess
 MUSIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "my_music")
 
 def check_dependencies():
-    """Checks if yt-dlp and ffmpeg are installed and accessible on system PATH."""
+    """Checks if yt-dlp and ffmpeg are installed and accessible."""
     yt_dlp_exists = shutil.which("yt-dlp") is not None
-    ffmpeg_exists = shutil.which("ffmpeg") is not None
+    
+    # Check global PATH, then check local node_modules fallback
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        local_fallback = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "node_modules", "ffmpeg-static", "ffmpeg.exe"
+        )
+        if os.path.exists(local_fallback):
+            ffmpeg_path = local_fallback
 
-    if not yt_dlp_exists or not ffmpeg_exists:
-        print("❌ Error: Missing required dependencies!")
+    # Check for node location
+    node_path = shutil.which("node")
+
+    if not yt_dlp_exists or not ffmpeg_path:
+        print("[ERROR] Missing required dependencies!")
         if not yt_dlp_exists:
-            print("  - yt-dlp is missing. Install it using: pip install yt-dlp (or download the binary)")
-        if not ffmpeg_exists:
+            print("  - yt-dlp is missing. Install it using: pip install yt-dlp")
+        if not ffmpeg_path:
             print("  - ffmpeg is missing. Download it and add it to your system PATH.")
         sys.exit(1)
     
-    print("✅ Dependencies verified: 'yt-dlp' and 'ffmpeg' are active.")
+    print(f"[OK] Dependencies verified: 'yt-dlp', 'ffmpeg' ({ffmpeg_path}), and 'node' ({node_path}) are active.")
+    return ffmpeg_path, node_path
 
-def download_audio(youtube_url):
+def download_audio(youtube_url, ffmpeg_path, node_path):
     """Downloads a YouTube video as an MP3 using yt-dlp and FFmpeg."""
     # Ensure the destination folder exists
     if not os.path.exists(MUSIC_DIR):
@@ -37,39 +50,44 @@ def download_audio(youtube_url):
         "-x",                            # Extract audio
         "--audio-format", "mp3",         # Convert to MP3
         "--audio-quality", "0",          # Best VBR audio quality
+        "--ffmpeg-location", ffmpeg_path,# Location of ffmpeg binary
         "-o", out_template,              # Output destination template
         "--no-playlist",                 # Don't download entire playlists unless specified
+        "--js-runtimes", f"node:{node_path}" if node_path else "node", # Specify explicit Node.js binary path
+        "--format", "bestaudio/best",    # Force audio format selection
+        "--extractor-args", "youtube:player-client=android", # Force Android player client to avoid 403 Forbidden
+        "--progress-template", "[download] [%(progress.bar)s] %(progress._percent_str)s of %(progress._total_bytes_estimate_str)s at %(progress._speed_str)s",
         youtube_url
     ]
 
-    print(f"\n📡 Starting download from: {youtube_url}")
-    print("⏳ Downloading & converting... (This may take a moment)\n")
+    print(f"\n[INFO] Starting download from: {youtube_url}")
+    print("[INFO] Downloading & converting... (This may take a moment)\n")
 
     try:
         # Run yt-dlp command and pipe output directly to console
         result = subprocess.run(command, check=True)
         if result.returncode == 0:
-            print("\n🎉 Success! The audio has been downloaded and converted to MP3 in './my_music'.")
+            print("\n[SUCCESS] The audio has been downloaded and converted to MP3 in './my_music'.")
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ Download failed: The command returned a non-zero exit code ({e.returncode}).")
+        print(f"\n[ERROR] Download failed: The command returned a non-zero exit code ({e.returncode}).")
     except Exception as e:
-        print(f"\n❌ An unexpected error occurred: {str(e)}")
+        print(f"\n[ERROR] An unexpected error occurred: {str(e)}")
 
 def main():
-    check_dependencies()
+    ffmpeg_path, node_path = check_dependencies()
     
     # Check if a URL was passed as a CLI argument
     if len(sys.argv) > 1:
         url = sys.argv[1]
     else:
         # Fallback to interactive prompt
-        url = input("🔗 Paste YouTube Video URL: ").strip()
+        url = input("Paste YouTube Video URL: ").strip()
 
     if not url:
-        print("❌ Error: No URL provided.")
+        print("[ERROR] No URL provided.")
         sys.exit(1)
 
-    download_audio(url)
+    download_audio(url, ffmpeg_path, node_path)
 
 if __name__ == "__main__":
     main()
