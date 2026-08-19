@@ -1,2 +1,8 @@
-node_modules/
+# Ignore local env secrets
 .env
+
+# Ignore node modules
+node_modules/
+
+# Ignore local music tracks
+my_music/

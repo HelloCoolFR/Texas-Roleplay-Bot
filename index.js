@@ -1,34 +1,113 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus,
+    VoiceConnectionStatus
+} = require('@discordjs/voice');
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 // --- CONFIGURATION ---
 const TOKEN = process.env.DISCORD_TOKEN; // Set this in Render's Environment Variables!
 const PORT = process.env.PORT || 3000;
 const WAITING_ROOM_NAME = "Waiting"; // The voice channel players must be in initially
+const MUSIC_DIR = path.join(__dirname, 'my_music'); // Folder for local MP3s
+
+// Ensure music directory exists
+if (!fs.existsSync(MUSIC_DIR)) {
+    fs.mkdirSync(MUSIC_DIR, { recursive: true });
+}
 
 // --- DISCORD BOT SETUP ---
-const client = new Client({ 
+const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
-    ] 
+    ]
 });
 
-client.on('ready', () => {
+// Music queues and players state per guild
+const guildMusicData = {};
+/* 
+  Structure for guildMusicData[guildId]:
+  {
+     queue: [], // Array of { filePath, title }
+     player: AudioPlayer,
+     connection: VoiceConnection
+  }
+*/
+
+client.on('clientReady', () => {
     console.log(`[Bot] Logged in as ${client.user.tag}!`);
     console.log(`[Bot] I am in ${client.guilds.cache.size} servers.`);
 });
 
+// Avoid crashes from unhandled promise rejections (like missing channel permissions)
+process.on('unhandledRejection', error => {
+    console.error('[Unhandled Rejection]', error);
+});
+
+client.on('error', error => {
+    console.error('[Discord Client Error]', error);
+});
+
 let ACTIVE_CATEGORY_ID = null;
 
+// --- MUSIC LOGIC HELPERS ---
+function getGuildMusic(guildId) {
+    if (!guildMusicData[guildId]) {
+        guildMusicData[guildId] = {
+            queue: [],
+            player: createAudioPlayer(),
+            connection: null
+        };
+
+        // Handle player state transitions
+        guildMusicData[guildId].player.on(AudioPlayerStatus.Idle, () => {
+            playNext(guildId);
+        });
+
+        guildMusicData[guildId].player.on('error', error => {
+            console.error(`[Music Error] in guild ${guildId}:`, error);
+            playNext(guildId);
+        });
+    }
+    return guildMusicData[guildId];
+}
+
+async function playNext(guildId) {
+    const data = guildMusicData[guildId];
+    if (!data || data.queue.length === 0) return;
+
+    const nextTrack = data.queue.shift();
+    try {
+        const resource = createAudioResource(nextTrack.filePath, { inlineVolume: true });
+        resource.volume.setVolume(0.7); // 70% default volume
+        data.player.play(resource);
+
+        if (data.connection) {
+            data.connection.subscribe(data.player);
+        }
+        console.log(`[Music] Now playing: ${nextTrack.title} in guild ${guildId}`);
+    } catch (err) {
+        console.error(`[Music] Failed to play track ${nextTrack.title}:`, err);
+        playNext(guildId);
+    }
+}
+
+// --- MESSAGE & COMMAND HANDLER ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // --- PROXIMITY VOCALS COMMANDS ---
     if (message.content === '!start-vocals' || message.content === '/start-vocals') {
         if (!message.member.permissions.has('ManageChannels')) {
             return message.reply("You do not have permission to use this command.");
@@ -40,8 +119,7 @@ client.on('messageCreate', async (message) => {
         }
 
         ACTIVE_CATEGORY_ID = categoryId;
-        
-        // Ensure Waiting room exists in this category
+
         let waitingChannel = message.guild.channels.cache.find(c => c.name === WAITING_ROOM_NAME && c.type === ChannelType.GuildVoice);
         if (!waitingChannel) {
             await message.guild.channels.create({
@@ -52,9 +130,13 @@ client.on('messageCreate', async (message) => {
             });
             message.reply(`Bound bot to this category. Created \`${WAITING_ROOM_NAME}\` channel!`);
         } else {
-            // Move it to this category if it exists somewhere else
-            await waitingChannel.setParent(ACTIVE_CATEGORY_ID);
-            message.reply(`Bound bot to this category. Moved existing \`${WAITING_ROOM_NAME}\` channel here.`);
+            try {
+                await waitingChannel.setParent(ACTIVE_CATEGORY_ID);
+                message.reply(`Bound bot to this category. Moved existing \`${WAITING_ROOM_NAME}\` channel here.`);
+            } catch (e) {
+                console.error("Failed to move Waiting channel (Missing Permissions):", e);
+                message.reply(`Bound bot to this category, but was unable to move the existing \`${WAITING_ROOM_NAME}\` channel (check bot permissions).`);
+            }
         }
     }
 
@@ -80,9 +162,88 @@ client.on('messageCreate', async (message) => {
         ACTIVE_CATEGORY_ID = null;
         message.reply(`Cleanup complete! Deleted ${deletedCount} proximity channels and reset the bot.`);
     }
+
+    // --- MUSIC BOT COMMANDS ---
+    const args = message.content.trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+
+    if (command === '!play') {
+        const query = args.join(' ');
+        if (!query) return message.reply("Please specify a song name to search for!");
+
+        if (!message.member.voice.channel) {
+            return message.reply("❌ You need to join a voice channel first!");
+        }
+
+        // Scan local music folder for matching MP3 files
+        const files = fs.readdirSync(MUSIC_DIR).filter(f => f.endsWith('.mp3'));
+        const matchedFile = files.find(f => f.toLowerCase().includes(query.toLowerCase()));
+
+        if (!matchedFile) {
+            return message.reply(`❌ Could not find an MP3 matching **'${query}'** in the \`my_music\` directory.`);
+        }
+
+        const filePath = path.join(MUSIC_DIR, matchedFile);
+        const title = path.basename(matchedFile, '.mp3');
+        const guildId = message.guild.id;
+        const musicData = getGuildMusic(guildId);
+
+        // Connect to voice if not already connected
+        if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+            musicData.connection = joinVoiceChannel({
+                channelId: message.member.voice.channel.id,
+                guildId: message.guild.id,
+                adapterCreator: message.guild.voiceAdapterCreator,
+            });
+        }
+
+        musicData.queue.push({ filePath, title });
+        message.reply(`➕ Added to queue: **${title}**`);
+
+        // If nothing is currently playing, start immediately
+        if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+            playNext(guildId);
+        }
+    }
+
+    if (command === '!skip') {
+        const guildId = message.guild.id;
+        const musicData = guildMusicData[guildId];
+        if (musicData && musicData.player.state.status !== AudioPlayerStatus.Idle) {
+            musicData.player.stop(); // Triggers Idle -> plays next song
+            message.reply("⏭️ Skipped current track.");
+        } else {
+            message.reply("❌ Nothing is playing right now.");
+        }
+    }
+
+    if (command === '!queue') {
+        const guildId = message.guild.id;
+        const musicData = guildMusicData[guildId];
+        if (!musicData || musicData.queue.length === 0) {
+            return message.reply("📭 The music queue is currently empty.");
+        }
+
+        const queueList = musicData.queue.map((track, index) => `${index + 1}. ${track.title}`).join('\n');
+        message.reply(`**Current Music Queue:**\n${queueList}`);
+    }
+
+    if (command === '!leave') {
+        const guildId = message.guild.id;
+        const musicData = guildMusicData[guildId];
+        if (musicData && musicData.connection) {
+            musicData.player.stop();
+            musicData.queue = [];
+            musicData.connection.destroy();
+            musicData.connection = null;
+            message.reply("👋 Disconnected from voice and cleared the queue.");
+        } else {
+            message.reply("❌ I'm not active in a voice channel.");
+        }
+    }
 });
 
-// Enforce Muting rules globally and cleanup
+// Enforce Muting rules globally and cleanup proximity voice channels
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // 1. Cleanup old channel if it's a ProxVoc and it's empty
     if (oldState.channel && (!newState.channel || oldState.channel.id !== newState.channel.id)) {
@@ -125,25 +286,21 @@ async function findMember(usernameInput) {
     usernameInput = usernameInput.toLowerCase();
     for (const [guildId, guild] of client.guilds.cache) {
         try {
-            // OPTIMIZATION 1: Check the bot's instant local cache first!
-            // Anyone connected to a Voice Channel is automatically cached by the bot.
-            let found = guild.members.cache.find(m => 
-                (m.user.username && m.user.username.toLowerCase() === usernameInput) || 
+            let found = guild.members.cache.find(m =>
+                (m.user.username && m.user.username.toLowerCase() === usernameInput) ||
                 (m.user.globalName && m.user.globalName.toLowerCase() === usernameInput) ||
                 (m.nickname && m.nickname.toLowerCase() === usernameInput)
             );
-            
+
             if (found) return { member: found, guild: guild };
 
-            // OPTIMIZATION 2: If not in cache, query Discord ONLY for this specific user.
-            // (Previously this downloaded the entire server list, causing 20-second API rate limits)
             const members = await guild.members.fetch({ query: usernameInput, limit: 10 });
-            found = members.find(m => 
-                (m.user.username && m.user.username.toLowerCase() === usernameInput) || 
+            found = members.find(m =>
+                (m.user.username && m.user.username.toLowerCase() === usernameInput) ||
                 (m.user.globalName && m.user.globalName.toLowerCase() === usernameInput) ||
                 (m.nickname && m.nickname.toLowerCase() === usernameInput)
             );
-            
+
             if (found) return { member: found, guild: guild };
         } catch (err) {
             console.log(`Error fetching members for guild ${guildId}:`, err);
@@ -154,16 +311,9 @@ async function findMember(usernameInput) {
 
 // Helper function to find or create a dynamic Voice Channel
 async function getOrCreateProximityChannel(guild, channelName) {
-    // Look for an existing channel with this name
     let channel = guild.channels.cache.find(c => c.name === channelName && c.type === ChannelType.GuildVoice);
-    
-    // If it exists but is FULL (unlikely) or something, we can use it. 
-    // Actually, to optimize, we REUSE empty channels!
-    if (channel) {
-        return channel;
-    }
+    if (channel) return channel;
 
-    // If it doesn't exist, create it dynamically
     console.log(`[Bot] Dynamically creating channel: ${channelName}`);
     channel = await guild.channels.create({
         name: channelName,
@@ -171,7 +321,6 @@ async function getOrCreateProximityChannel(guild, channelName) {
         parent: ACTIVE_CATEGORY_ID || undefined,
         reason: 'Dynamic Proximity Voice Chat creation',
     });
-    
     return channel;
 }
 
@@ -181,7 +330,6 @@ app.use(express.json());
 app.use(cors());
 
 // ENDPOINT: Verify User
-// Roblox calls this when a player types their Discord username
 app.post('/verify_user', async (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ success: false, error: "No username provided" });
@@ -191,12 +339,10 @@ app.post('/verify_user', async (req, res) => {
 
     const { member } = result;
 
-    // Check if they are in a voice channel
     if (!member.voice.channel) {
         return res.json({ success: false, error: `You must join the '${WAITING_ROOM_NAME}' voice channel first!` });
     }
 
-    // Force them to be in the exact "Waiting" room
     if (member.voice.channel.name !== WAITING_ROOM_NAME) {
         return res.json({ success: false, error: `You must be in the '${WAITING_ROOM_NAME}' vocal channel first!` });
     }
@@ -206,7 +352,6 @@ app.post('/verify_user', async (req, res) => {
 });
 
 // ENDPOINT: Move User
-// Roblox calls this to drag a player into a specific ProxVoc room
 app.post('/move_user', async (req, res) => {
     const { username, targetChannelName, mute } = req.body;
     if (!username || !targetChannelName) return res.status(400).json({ success: false });
@@ -221,20 +366,16 @@ app.post('/move_user', async (req, res) => {
     }
 
     try {
-        // Find or create the target proximity channel
         const targetChannel = await getOrCreateProximityChannel(guild, targetChannelName);
-
-        // Move the user!
         await member.voice.setChannel(targetChannel);
         console.log(`[API] Moved ${username} into ${targetChannelName}`);
-        
-        // Handle Mute
+
         if (mute === true) {
             await member.voice.setMute(true, "Alone in proximity chat");
         } else if (mute === false) {
             await member.voice.setMute(false, "Joined proximity chat");
         }
-        
+
         return res.json({ success: true });
     } catch (err) {
         console.log(`[API Error] Failed to move/mute user:`, err);
@@ -282,7 +423,7 @@ app.post('/waiting_players', async (req, res) => {
                 });
             }
         }
-        players = [...new Set(players)]; // Unique
+        players = [...new Set(players)];
         return res.json({ success: true, players: players });
     } catch (err) {
         console.log(`[API Error] Failed to fetch waiting players:`, err);
