@@ -3,6 +3,3 @@
 
 # Ignore node modules
 node_modules/
-
-# Ignore local music tracks
-my_music/
