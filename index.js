@@ -163,14 +163,17 @@ async function playRadioNext(guildId) {
         radioState.connection.subscribe(radioState.player);
         console.log(`[Radio] Now playing: ${title} in guild ${guildId}`);
 
-        // Rename the channel to the name of the MP3
+        // Update voice channel status to the name of the MP3
         const guild = client.guilds.cache.get(guildId);
         if (guild && radioState.connection) {
             const channelId = radioState.connection.joinConfig.channelId;
             const channel = guild.channels.cache.get(channelId);
-            if (channel) {
-                // Prepend a radio emoji and clean title
-                await channel.setName(`📻 ${title.slice(0, 80)}`, "Update playing song status");
+            if (channel && typeof channel.setStatus === 'function') {
+                try {
+                    await channel.setStatus(`🎵 Playing: ${title.slice(0, 40)}`, "Update radio status");
+                } catch (e) {
+                    console.error("Failed to set channel status (missing permissions or feature unavailable):", e);
+                }
             }
         }
     } catch (err) {
@@ -217,10 +220,12 @@ async function checkRadioAutoJoinLeave(guild, voiceChannel) {
                 radioState.player = null;
             }
             try {
-                // Restore channel name back to default
-                await voiceChannel.setName(RADIO_CHANNEL_NAME, "Restore default channel name");
+                // Clear channel status on disconnect
+                if (typeof voiceChannel.setStatus === 'function') {
+                    await voiceChannel.setStatus("", "Clear radio status");
+                }
             } catch (e) {
-                console.error("Failed to restore default channel name:", e);
+                console.error("Failed to clear channel status:", e);
             }
             radioState.connection.destroy();
             radioState.connection = null;
