@@ -79,6 +79,125 @@ client.on('error', error => {
 
 let ACTIVE_CATEGORY_ID = null;
 
+// --- RADIO TAILOR SYSTEM STATE ---
+const RADIO_CHANNEL_NAME = "Radio_Tailor";
+const radioState = {
+    shuffledPlaylist: [],
+    index: 0,
+    connection: null,
+    player: null,
+    skipVotes: new Set(),
+    currentTrackTitle: ""
+};
+
+// Fisher-Yates shuffle helper
+function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function loadRadioPlaylist() {
+    try {
+        const files = fs.readdirSync(MUSIC_DIR).filter(f => f.endsWith('.mp3'));
+        if (files.length === 0) return [];
+        return shuffleArray(files);
+    } catch (e) {
+        console.error("Failed to load radio playlist:", e);
+        return [];
+    }
+}
+
+async function playRadioNext(guildId) {
+    if (!radioState.connection || radioState.connection.state.status === VoiceConnectionStatus.Destroyed) return;
+
+    // Load or cycle playlist
+    if (radioState.shuffledPlaylist.length === 0 || radioState.index >= radioState.shuffledPlaylist.length) {
+        radioState.shuffledPlaylist = loadRadioPlaylist();
+        radioState.index = 0;
+        if (radioState.shuffledPlaylist.length === 0) {
+            console.log("[Radio] my_music directory is empty, cannot play radio.");
+            return;
+        }
+    }
+
+    const nextTrack = radioState.shuffledPlaylist[radioState.index];
+    radioState.index++;
+    radioState.skipVotes.clear(); // Reset skip votes for new track
+
+    const filePath = path.join(MUSIC_DIR, nextTrack);
+    const title = path.basename(nextTrack, '.mp3');
+    radioState.currentTrackTitle = title;
+
+    try {
+        if (!radioState.player) {
+            radioState.player = createAudioPlayer();
+            radioState.player.on(AudioPlayerStatus.Idle, () => {
+                playRadioNext(guildId);
+            });
+            radioState.player.on('error', err => {
+                console.error("[Radio Player Error]:", err);
+                playRadioNext(guildId);
+            });
+        }
+
+        const resource = createAudioResource(filePath, { inlineVolume: true });
+        resource.volume.setVolume(0.7);
+        radioState.player.play(resource);
+
+        radioState.connection.subscribe(radioState.player);
+        console.log(`[Radio] Now playing: ${title} in guild ${guildId}`);
+    } catch (err) {
+        console.error(`[Radio] Failed to play track ${title}:`, err);
+        playRadioNext(guildId);
+    }
+}
+
+async function checkRadioAutoJoinLeave(guild, voiceChannel) {
+    const members = voiceChannel.members.filter(m => !m.user.bot);
+    const hasListeners = members.size > 0;
+
+    // Join if there are listeners and we are not in
+    if (hasListeners) {
+        const connState = radioState.connection ? radioState.connection.state.status : null;
+        if (!radioState.connection || connState === VoiceConnectionStatus.Disconnected || connState === VoiceConnectionStatus.Destroyed) {
+            console.log(`[Radio] Listeners detected in ${RADIO_CHANNEL_NAME}, joining...`);
+            try {
+                radioState.connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                });
+
+                radioState.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                    radioState.connection = null;
+                    if (radioState.player) {
+                        radioState.player.stop();
+                        radioState.player = null;
+                    }
+                });
+
+                playRadioNext(guild.id);
+            } catch (err) {
+                console.error("[Radio Join Error]:", err);
+            }
+        }
+    } else {
+        // Leave if empty and we are connected
+        if (radioState.connection && radioState.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+            console.log(`[Radio] No listeners left in ${RADIO_CHANNEL_NAME}, leaving...`);
+            if (radioState.player) {
+                radioState.player.stop();
+                radioState.player = null;
+            }
+            radioState.connection.destroy();
+            radioState.connection = null;
+        }
+    }
+}
+
 // --- MUSIC LOGIC HELPERS ---
 function getGuildMusic(guildId) {
     if (!guildMusicData[guildId]) {
@@ -421,6 +540,27 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    if (command === '!skip-radio') {
+        const voiceChannel = message.member.voice.channel;
+        if (!voiceChannel || voiceChannel.name !== RADIO_CHANNEL_NAME) {
+            return message.reply(`❌ You must be inside the \`${RADIO_CHANNEL_NAME}\` voice channel to vote to skip!`);
+        }
+
+        const listeners = voiceChannel.members.filter(m => !m.user.bot);
+        const totalListeners = listeners.size;
+        
+        radioState.skipVotes.add(message.author.id);
+        const currentVotes = radioState.skipVotes.size;
+        const requiredVotes = Math.ceil(totalListeners / 2 + 0.1); // > 50% (at least 51%)
+
+        if (currentVotes >= requiredVotes) {
+            message.reply(`⏭️ **Radio Skip** vote passed (${currentVotes}/${totalListeners} votes)! Skipping current track: **${radioState.currentTrackTitle}**`);
+            playRadioNext(message.guild.id);
+        } else {
+            message.reply(`🗳️ **Radio Skip Vote registered** (${currentVotes}/${totalListeners} voted). Needs at least **${requiredVotes}** votes (more than 50%) to skip.`);
+        }
+    }
+
     if (command === '!version') {
         let commitInfo = "Unknown commit";
         try {
@@ -429,12 +569,30 @@ client.on('messageCreate', async (message) => {
         } catch (e) {
             commitInfo = "Deployed on Render (Git history unavailable)";
         }
-        message.reply(`⚙️ **Texas Roleplay Bot Version 2.1.1**\n📝 **Last Commit**: \`${commitInfo}\``);
+        message.reply(`⚙️ **Texas Roleplay Bot Version 2.2.0**\n📝 **Last Commit**: \`${commitInfo}\``);
     }
 });
 
 // Enforce Muting rules globally and cleanup proximity voice channels
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    // Check Radio Auto-Join/Leave triggers
+    if (newState.channel && newState.channel.name === RADIO_CHANNEL_NAME) {
+        await checkRadioAutoJoinLeave(newState.guild, newState.channel);
+    }
+    if (oldState.channel && oldState.channel.name === RADIO_CHANNEL_NAME) {
+        // Remove member from skip votes if they left
+        radioState.skipVotes.delete(oldState.id);
+        
+        await checkRadioAutoJoinLeave(oldState.guild, oldState.channel);
+        
+        // Re-evaluate skip threshold with the remaining listeners
+        const listeners = oldState.channel.members.filter(m => !m.user.bot);
+        if (listeners.size > 0 && radioState.skipVotes.size >= Math.ceil(listeners.size / 2 + 0.1)) {
+            console.log("[Radio] Skip threshold passed after member disconnect. Skipping current track.");
+            playRadioNext(oldState.guild.id);
+        }
+    }
+
     // Ignore updates related to the bot itself
     if (newState.id === client.user.id || oldState.id === client.user.id) return;
 
