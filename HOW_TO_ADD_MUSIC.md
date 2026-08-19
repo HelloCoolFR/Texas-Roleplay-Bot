@@ -26,7 +26,13 @@ This will open the prompt, ask you for the YouTube URL, download the song, conve
 
 ---
 
-### Step 4: Git Command Steps
+### Step 4: Git Command Steps (Automatic Shortcut)
+Instead of typing commands manually, you can instantly stage, commit, and push your newly downloaded music files to GitHub by running this shortcut from the repository root:
+```powershell
+.\Push_Music_Git.bat
+```
+
+Alternatively, you can run the commands manually:
 1. **Stage all changes** (adds new MP3 files and tracks them):
    ```bash
    git add my_music/
