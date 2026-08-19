@@ -15,12 +15,14 @@ cd "c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla\discord_bot"
 ### Step 2: Add your MP3 files
 Drop any new `.mp3` files you want into the `discord_bot/my_music/` directory.
 
-### Alternative: Download Directly from YouTube
-You can download music directly from YouTube as an `.mp3` file inside your local `my_music` folder using the custom Python script:
+### Alternative: Download Directly from YouTube (Interactive)
+You can download music directly from YouTube as an `.mp3` file inside your local `my_music` folder using the custom interactive shortcut script.
 
+From the repository root (`c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla`), simply run:
 ```powershell
-cd "c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla\discord_bot" ; python download_music.py "https://www.youtube.com/watch?v=..."
+.\Add_Music_YTB.bat
 ```
+This will open the prompt, ask you for the YouTube URL, download the song, convert it, and output the progress bar!
 
 ---
 
