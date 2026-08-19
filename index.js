@@ -163,6 +163,52 @@ client.on('messageCreate', async (message) => {
         message.reply(`Cleanup complete! Deleted ${deletedCount} proximity channels and reset the bot.`);
     }
 
+    // --- INTERACTIVE UPLOADED FILE HANDLER ---
+    // If a user uploads an MP3 file directly, download and play it
+    if (message.attachments.size > 0) {
+        const mp3Attachment = message.attachments.find(att => att.name.toLowerCase().endsWith('.mp3'));
+        if (mp3Attachment) {
+            if (!message.member.voice.channel) {
+                return message.reply("❌ Join a voice channel first to play this uploaded song!");
+            }
+
+            const title = path.basename(mp3Attachment.name, '.mp3');
+            const safeTitle = title.replace(/[^a-zA-Z0-9-_ ]/g, ''); // sanitize filename
+            const downloadPath = path.join(MUSIC_DIR, `${safeTitle}_uploaded_${Date.now()}.mp3`);
+
+            try {
+                const response = await fetch(mp3Attachment.url);
+                if (!response.ok) throw new Error("Failed to download attachment");
+                
+                const buffer = Buffer.from(await response.arrayBuffer());
+                fs.writeFileSync(downloadPath, buffer);
+
+                const guildId = message.guild.id;
+                const musicData = getGuildMusic(guildId);
+
+                // Connect to voice if not already connected
+                if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+                    musicData.connection = joinVoiceChannel({
+                        channelId: message.member.voice.channel.id,
+                        guildId: message.guild.id,
+                        adapterCreator: message.guild.voiceAdapterCreator,
+                    });
+                }
+
+                musicData.queue.push({ filePath: downloadPath, title: `${title} (Uploaded)` });
+                message.reply(`📥 Downloaded and added to queue: **${title}**`);
+
+                // If nothing is playing, start immediately
+                if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+                    playNext(guildId);
+                }
+            } catch (err) {
+                console.error("[Upload Play Error]:", err);
+                message.reply("❌ Failed to download or play the uploaded MP3 file.");
+            }
+        }
+    }
+
     // --- MUSIC BOT COMMANDS ---
     const args = message.content.trim().split(/ +/);
     const command = args.shift().toLowerCase();
@@ -204,6 +250,88 @@ client.on('messageCreate', async (message) => {
         if (musicData.player.state.status === AudioPlayerStatus.Idle) {
             playNext(guildId);
         }
+    }
+
+    if (command === '!list') {
+        if (!message.member.voice.channel) {
+            return message.reply("❌ You need to join a voice channel first!");
+        }
+
+        // Scan local music folder for MP3 files
+        const files = fs.readdirSync(MUSIC_DIR).filter(f => f.endsWith('.mp3'));
+        if (files.length === 0) {
+            return message.reply("❌ The `my_music` directory is currently empty. Drop some .mp3 files there first!");
+        }
+
+        // Build Discord Select Menu options (limit to 25 items due to Discord Select Menu constraints)
+        const options = files.slice(0, 25).map((file) => {
+            const title = path.basename(file, '.mp3');
+            return {
+                label: title.slice(0, 100), // label constraint: max 100 chars
+                description: `Play '${title.slice(0, 50)}'`,
+                value: file
+            };
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('song-select')
+            .setPlaceholder('🎵 Choose a song from the library...')
+            .addOptions(options);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        const responseMsg = await message.reply({
+            content: `📂 **Texas Roleplay Song Library** (${files.length} songs available):`,
+            components: [row]
+        });
+
+        // Setup component collector for selection
+        const filter = i => i.customId === 'song-select' && i.user.id === message.author.id;
+        const collector = responseMsg.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            filter,
+            time: 60000 // 60 seconds interactive timeout
+        });
+
+        collector.on('collect', async i => {
+            const selectedFile = i.values[0];
+            const filePath = path.join(MUSIC_DIR, selectedFile);
+            const title = path.basename(selectedFile, '.mp3');
+            const guildId = message.guild.id;
+            const musicData = getGuildMusic(guildId);
+
+            // Connect to voice if not already connected
+            if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+                musicData.connection = joinVoiceChannel({
+                    channelId: message.member.voice.channel.id,
+                    guildId: message.guild.id,
+                    adapterCreator: message.guild.voiceAdapterCreator,
+                });
+            }
+
+            musicData.queue.push({ filePath, title });
+
+            await i.update({
+                content: `✅ Selected: **${title}** (Added to queue!)`,
+                components: []
+            });
+
+            // If nothing is playing, play immediately
+            if (musicData.player.state.status === AudioPlayerStatus.Idle) {
+                playNext(guildId);
+            }
+        });
+
+        collector.on('end', async (collected, reason) => {
+            if (reason === 'time') {
+                try {
+                    await responseMsg.edit({
+                        content: "⏳ Song list selection timed out.",
+                        components: []
+                    });
+                } catch (e) {}
+            }
+        });
     }
 
     if (command === '!skip') {
