@@ -429,7 +429,7 @@ client.on('messageCreate', async (message) => {
         } catch (e) {
             commitInfo = "Deployed on Render (Git history unavailable)";
         }
-        message.reply(`⚙️ **Texas Roleplay Bot Version 2.1.0**\n📝 **Last Commit**: \`${commitInfo}\``);
+        message.reply(`⚙️ **Texas Roleplay Bot Version 2.1.1**\n📝 **Last Commit**: \`${commitInfo}\``);
     }
 });
 
