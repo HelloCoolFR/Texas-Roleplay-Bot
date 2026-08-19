@@ -420,6 +420,9 @@ client.on('messageCreate', async (message) => {
 
 // Enforce Muting rules globally and cleanup proximity voice channels
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    // Ignore updates related to the bot itself
+    if (newState.id === client.user.id || oldState.id === client.user.id) return;
+
     // 1. Cleanup old channel if it's a ProxVoc and it's empty
     if (oldState.channel && (!newState.channel || oldState.channel.id !== newState.channel.id)) {
         if (oldState.channel.name.startsWith('ProxVoc')) {
