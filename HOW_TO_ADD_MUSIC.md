@@ -18,8 +18,8 @@ Drop any new `.mp3` files you want into the `discord_bot/my_music/` directory.
 ### Alternative: Download Directly from YouTube
 You can download music directly from YouTube as an `.mp3` file inside your local `my_music` folder using the custom Python script:
 
-```bash
-cd "c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla\discord_bot" && python download_music.py "https://www.youtube.com/watch?v=..."
+```powershell
+cd "c:\Users\MATRINGHEN\Documents\Rojo_Projects\Texas_Rolepla\discord_bot" ; python download_music.py "https://www.youtube.com/watch?v=..."
 ```
 
 ---
