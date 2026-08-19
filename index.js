@@ -66,6 +66,19 @@ const guildMusicData = {};
 client.on('clientReady', () => {
     console.log(`[Bot] Logged in as ${client.user.tag}!`);
     console.log(`[Bot] I am in ${client.guilds.cache.size} servers.`);
+
+    // Self-ping Render every 10 minutes to prevent container sleep
+    setInterval(async () => {
+        try {
+            const selfUrl = `https://texas-roleplay-bot.onrender.com/ping`;
+            const res = await fetch(selfUrl);
+            if (res.ok) {
+                console.log("[Keep-Alive] Successfully self-pinged to prevent container sleep.");
+            }
+        } catch (e) {
+            console.error("[Keep-Alive Warning] Self-ping failed (expected if local offline):", e.message);
+        }
+    }, 600000); // 10 minutes
 });
 
 // Avoid crashes from unhandled promise rejections (like missing channel permissions)
@@ -679,6 +692,11 @@ async function getOrCreateProximityChannel(guild, channelName) {
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+// ENDPOINT: Keep-Alive Ping
+app.get('/ping', (req, res) => {
+    return res.json({ success: true, message: "pong" });
+});
 
 // ENDPOINT: Verify User
 app.post('/verify_user', async (req, res) => {
