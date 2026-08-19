@@ -84,26 +84,35 @@ function getGuildMusic(guildId) {
     if (!guildMusicData[guildId]) {
         guildMusicData[guildId] = {
             queue: [],
-            player: createAudioPlayer(),
+            player: null,
             connection: null
         };
+    }
+    return guildMusicData[guildId];
+}
 
-        // Handle player state transitions
-        guildMusicData[guildId].player.on(AudioPlayerStatus.Idle, () => {
+function ensureAudioPlayer(guildId, musicData) {
+    if (!musicData.player) {
+        musicData.player = createAudioPlayer();
+        
+        musicData.player.on(AudioPlayerStatus.Idle, () => {
             playNext(guildId);
         });
 
-        guildMusicData[guildId].player.on('error', error => {
+        musicData.player.on('error', error => {
             console.error(`[Music Error] in guild ${guildId}:`, error);
             playNext(guildId);
         });
     }
-    return guildMusicData[guildId];
+    return musicData.player;
 }
 
 async function playNext(guildId) {
     const data = guildMusicData[guildId];
     if (!data || data.queue.length === 0) return;
+
+    // Ensure the player is instantiated
+    ensureAudioPlayer(guildId, data);
 
     const nextTrack = data.queue.shift();
     try {
@@ -396,7 +405,10 @@ client.on('messageCreate', async (message) => {
         const guildId = message.guild.id;
         const musicData = guildMusicData[guildId];
         if (musicData && musicData.connection) {
-            musicData.player.stop();
+            if (musicData.player) {
+                musicData.player.stop();
+                musicData.player = null;
+            }
             musicData.queue = [];
             musicData.connection.destroy();
             musicData.connection = null;
