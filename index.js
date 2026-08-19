@@ -369,6 +369,17 @@ client.on('messageCreate', async (message) => {
             message.reply("❌ I'm not active in a voice channel.");
         }
     }
+
+    if (command === '!version') {
+        let commitInfo = "Unknown commit";
+        try {
+            const execSync = require('child_process').execSync;
+            commitInfo = execSync('git log -1 --pretty=format:"%h - %s (%cr)"', { encoding: 'utf8' }).trim();
+        } catch (e) {
+            commitInfo = "Deployed on Render (Git history unavailable)";
+        }
+        message.reply(`⚙️ **Texas Roleplay Bot Version 2.1.0**\n📝 **Last Commit**: \`${commitInfo}\``);
+    }
 });
 
 // Enforce Muting rules globally and cleanup proximity voice channels
