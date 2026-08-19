@@ -125,8 +125,6 @@ function loadRadioPlaylist() {
 }
 
 async function playRadioNext(guildId) {
-    if (!radioState.connection || radioState.connection.state.status === VoiceConnectionStatus.Destroyed) return;
-
     // Load or cycle playlist
     if (radioState.shuffledPlaylist.length === 0 || radioState.index >= radioState.shuffledPlaylist.length) {
         radioState.shuffledPlaylist = loadRadioPlaylist();
@@ -161,26 +159,29 @@ async function playRadioNext(guildId) {
         resource.volume.setVolume(0.7);
         radioState.player.play(resource);
 
-        radioState.connection.subscribe(radioState.player);
         console.log(`[Radio] Now playing: ${title} in guild ${guildId}`);
 
-        // Update voice channel status to the name of the MP3
-        const guild = client.guilds.cache.get(guildId);
-        if (guild && radioState.connection) {
-            const channelId = radioState.connection.joinConfig.channelId;
-            const channel = guild.channels.cache.get(channelId);
-            if (channel) {
-                try {
-                    if (typeof channel.setStatus === 'function') {
-                        await channel.setStatus(`🎵 Playing: ${title.slice(0, 40)}`, "Update radio status");
-                    } else {
-                        // Raw REST API fallback for updating voice status
-                        await client.rest.put(`/channels/${channelId}/voice-status`, {
-                            body: { status: `🎵 Playing: ${title.slice(0, 40)}` }
-                        });
+        // Update connection and voice status if currently connected
+        if (radioState.connection && radioState.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+            radioState.connection.subscribe(radioState.player);
+
+            const guild = client.guilds.cache.get(guildId);
+            if (guild) {
+                const channelId = radioState.connection.joinConfig.channelId;
+                const channel = guild.channels.cache.get(channelId);
+                if (channel) {
+                    try {
+                        if (typeof channel.setStatus === 'function') {
+                            await channel.setStatus(`🎵 Playing: ${title.slice(0, 40)}`, "Update radio status");
+                        } else {
+                            // Raw REST API fallback for updating voice status
+                            await client.rest.put(`/channels/${channelId}/voice-status`, {
+                                body: { status: `🎵 Playing: ${title.slice(0, 40)}` }
+                            });
+                        }
+                    } catch (e) {
+                        console.error("Failed to set voice channel status:", e);
                     }
-                } catch (e) {
-                    console.error("Failed to set voice channel status:", e);
                 }
             }
         }
@@ -219,9 +220,23 @@ async function checkRadioAutoJoinLeave(guild, voiceChannel) {
                 if (!radioState.player) {
                     playRadioNext(guild.id);
                 } else {
-                    // Subscribe and unpause the player
+                    // Subscribe to the live running player
                     radioState.connection.subscribe(radioState.player);
-                    radioState.player.unpause();
+                    
+                    // Immediately update status and presence for the new listeners
+                    try {
+                        if (typeof voiceChannel.setStatus === 'function') {
+                            await voiceChannel.setStatus(`🎵 Playing: ${radioState.currentTrackTitle.slice(0, 40)}`, "Sync status on join");
+                        } else {
+                            await client.rest.put(`/channels/${voiceChannel.id}/voice-status`, {
+                                body: { status: `🎵 Playing: ${radioState.currentTrackTitle.slice(0, 40)}` }
+                            });
+                        }
+                    } catch (e) {}
+
+                    try {
+                        client.user.setActivity(radioState.currentTrackTitle.slice(0, 40), { type: ActivityType.Listening });
+                    } catch (e) {}
                 }
             } catch (err) {
                 console.error("[Radio Join Error]:", err);
@@ -231,11 +246,6 @@ async function checkRadioAutoJoinLeave(guild, voiceChannel) {
         // Disconnect if empty and we are connected
         if (radioState.connection && radioState.connection.state.status !== VoiceConnectionStatus.Destroyed) {
             console.log(`[Radio] No listeners left in ${RADIO_CHANNEL_NAME}, disconnecting...`);
-            
-            // Pause instead of stop to preserve current playlist index
-            if (radioState.player) {
-                radioState.player.pause();
-            }
             
             try {
                 // Clear channel status on disconnect
