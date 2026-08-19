@@ -5,7 +5,8 @@ const {
     ChannelType, 
     ActionRowBuilder, 
     StringSelectMenuBuilder, 
-    ComponentType 
+    ComponentType,
+    ActivityType
 } = require('discord.js');
 const {
     joinVoiceChannel,
@@ -168,14 +169,26 @@ async function playRadioNext(guildId) {
         if (guild && radioState.connection) {
             const channelId = radioState.connection.joinConfig.channelId;
             const channel = guild.channels.cache.get(channelId);
-            if (channel && typeof channel.setStatus === 'function') {
+            if (channel) {
                 try {
-                    await channel.setStatus(`🎵 Playing: ${title.slice(0, 40)}`, "Update radio status");
+                    if (typeof channel.setStatus === 'function') {
+                        await channel.setStatus(`🎵 Playing: ${title.slice(0, 40)}`, "Update radio status");
+                    } else {
+                        // Raw REST API fallback for updating voice status
+                        await client.rest.put(`/channels/${channelId}/voice-status`, {
+                            body: { status: `🎵 Playing: ${title.slice(0, 40)}` }
+                        });
+                    }
                 } catch (e) {
-                    console.error("Failed to set channel status (missing permissions or feature unavailable):", e);
+                    console.error("Failed to set voice channel status:", e);
                 }
             }
         }
+
+        // Set Bot Custom Presence
+        try {
+            client.user.setActivity(title.slice(0, 40), { type: ActivityType.Listening });
+        } catch (e) {}
     } catch (err) {
         console.error(`[Radio] Failed to play track ${title}:`, err);
         playRadioNext(guildId);
@@ -200,33 +213,48 @@ async function checkRadioAutoJoinLeave(guild, voiceChannel) {
 
                 radioState.connection.on(VoiceConnectionStatus.Destroyed, () => {
                     radioState.connection = null;
-                    if (radioState.player) {
-                        radioState.player.stop();
-                        radioState.player = null;
-                    }
                 });
 
-                playRadioNext(guild.id);
+                // Setup the player if missing
+                if (!radioState.player) {
+                    playRadioNext(guild.id);
+                } else {
+                    // Subscribe and unpause the player
+                    radioState.connection.subscribe(radioState.player);
+                    radioState.player.unpause();
+                }
             } catch (err) {
                 console.error("[Radio Join Error]:", err);
             }
         }
     } else {
-        // Leave if empty and we are connected
+        // Disconnect if empty and we are connected
         if (radioState.connection && radioState.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-            console.log(`[Radio] No listeners left in ${RADIO_CHANNEL_NAME}, leaving...`);
+            console.log(`[Radio] No listeners left in ${RADIO_CHANNEL_NAME}, disconnecting...`);
+            
+            // Pause instead of stop to preserve current playlist index
             if (radioState.player) {
-                radioState.player.stop();
-                radioState.player = null;
+                radioState.player.pause();
             }
+            
             try {
                 // Clear channel status on disconnect
                 if (typeof voiceChannel.setStatus === 'function') {
                     await voiceChannel.setStatus("", "Clear radio status");
+                } else {
+                    await client.rest.put(`/channels/${voiceChannel.id}/voice-status`, {
+                        body: { status: "" }
+                    });
                 }
             } catch (e) {
                 console.error("Failed to clear channel status:", e);
             }
+
+            // Clear Bot Custom Presence
+            try {
+                client.user.setPresence({ activities: [], status: 'online' });
+            } catch (e) {}
+            
             radioState.connection.destroy();
             radioState.connection = null;
         }
@@ -288,7 +316,6 @@ async function playNext(guildId) {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // --- PROXIMITY VOCALS COMMANDS ---
     if (message.content === '!start-vocals' || message.content === '/start-vocals') {
         if (!message.member.permissions.has('ManageChannels')) {
             return message.reply("You do not have permission to use this command.");
@@ -301,22 +328,66 @@ client.on('messageCreate', async (message) => {
 
         ACTIVE_CATEGORY_ID = categoryId;
 
+        // 1. Setup Waiting Room
         let waitingChannel = message.guild.channels.cache.find(c => c.name === WAITING_ROOM_NAME && c.type === ChannelType.GuildVoice);
         if (!waitingChannel) {
-            await message.guild.channels.create({
-                name: WAITING_ROOM_NAME,
-                type: ChannelType.GuildVoice,
-                parent: ACTIVE_CATEGORY_ID,
-                reason: 'Created Waiting Hub via !start-vocals'
-            });
-            message.reply(`Bound bot to this category. Created \`${WAITING_ROOM_NAME}\` channel!`);
+            try {
+                waitingChannel = await message.guild.channels.create({
+                    name: WAITING_ROOM_NAME,
+                    type: ChannelType.GuildVoice,
+                    parent: ACTIVE_CATEGORY_ID,
+                    reason: 'Created Waiting Hub via !start-vocals'
+                });
+                message.reply(`Bound bot to this category. Created \`${WAITING_ROOM_NAME}\` channel!`);
+            } catch (e) {
+                console.error("Failed to create waiting channel:", e);
+            }
         } else {
             try {
                 await waitingChannel.setParent(ACTIVE_CATEGORY_ID);
                 message.reply(`Bound bot to this category. Moved existing \`${WAITING_ROOM_NAME}\` channel here.`);
             } catch (e) {
                 console.error("Failed to move Waiting channel (Missing Permissions):", e);
-                message.reply(`Bound bot to this category, but was unable to move the existing \`${WAITING_ROOM_NAME}\` channel (check bot permissions).`);
+            }
+        }
+
+        // 2. Setup Radio_Tailor Room
+        let radioChannel = message.guild.channels.cache.find(c => c.name === RADIO_CHANNEL_NAME && c.type === ChannelType.GuildVoice);
+        if (!radioChannel) {
+            try {
+                radioChannel = await message.guild.channels.create({
+                    name: RADIO_CHANNEL_NAME,
+                    type: ChannelType.GuildVoice,
+                    parent: ACTIVE_CATEGORY_ID,
+                    reason: 'Created Radio Tailor via !start-vocals'
+                });
+                message.reply(`Created \`${RADIO_CHANNEL_NAME}\` channel!`);
+            } catch (e) {
+                console.error("Failed to create radio channel:", e);
+            }
+        } else {
+            try {
+                await radioChannel.setParent(ACTIVE_CATEGORY_ID);
+            } catch (e) {}
+        }
+
+        // 3. Immediately join Radio_Tailor and start playing (even with 0 users)
+        if (radioChannel) {
+            try {
+                console.log(`[Radio] Auto-joining ${RADIO_CHANNEL_NAME} on start-vocals...`);
+                radioState.connection = joinVoiceChannel({
+                    channelId: radioChannel.id,
+                    guildId: message.guild.id,
+                    adapterCreator: message.guild.voiceAdapterCreator,
+                });
+
+                radioState.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                    radioState.connection = null;
+                });
+
+                playRadioNext(message.guild.id);
+            } catch (err) {
+                console.error("[Radio Auto-Start Error]:", err);
             }
         }
     }
@@ -329,7 +400,7 @@ client.on('messageCreate', async (message) => {
         let deletedCount = 0;
         message.guild.channels.cache.forEach(async (channel) => {
             if (channel.type === ChannelType.GuildVoice) {
-                if (channel.name === WAITING_ROOM_NAME || channel.name.startsWith('ProxVoc')) {
+                if (channel.name === WAITING_ROOM_NAME || channel.name === RADIO_CHANNEL_NAME || channel.name.startsWith('ProxVoc')) {
                     try {
                         await channel.delete('Cleanup via !stop-vocals');
                         deletedCount++;
@@ -340,8 +411,21 @@ client.on('messageCreate', async (message) => {
             }
         });
 
+        // Reset radio state completely
+        if (radioState.player) {
+            radioState.player.stop();
+            radioState.player = null;
+        }
+        if (radioState.connection) {
+            radioState.connection.destroy();
+            radioState.connection = null;
+        }
+        radioState.shuffledPlaylist = [];
+        radioState.index = 0;
+        radioState.skipVotes.clear();
+
         ACTIVE_CATEGORY_ID = null;
-        message.reply(`Cleanup complete! Deleted ${deletedCount} proximity channels and reset the bot.`);
+        message.reply(`Cleanup complete! Deleted ${deletedCount} proximity and radio channels, stopped radio play, and reset the bot.`);
     }
 
     // --- INTERACTIVE UPLOADED FILE HANDLER ---
