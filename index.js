@@ -1,5 +1,12 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    ChannelType, 
+    ActionRowBuilder, 
+    StringSelectMenuBuilder, 
+    ComponentType 
+} = require('discord.js');
 const {
     joinVoiceChannel,
     createAudioPlayer,
