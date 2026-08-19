@@ -194,11 +194,17 @@ client.on('messageCreate', async (message) => {
                 const musicData = getGuildMusic(guildId);
 
                 // Connect to voice if not already connected
-                if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+                const connState = musicData.connection ? musicData.connection.state.status : null;
+                if (!musicData.connection || connState === VoiceConnectionStatus.Disconnected || connState === VoiceConnectionStatus.Destroyed) {
                     musicData.connection = joinVoiceChannel({
                         channelId: message.member.voice.channel.id,
                         guildId: message.guild.id,
                         adapterCreator: message.guild.voiceAdapterCreator,
+                    });
+
+                    // Listen for destroyed state to nullify
+                    musicData.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                        musicData.connection = null;
                     });
                 }
 
@@ -242,11 +248,17 @@ client.on('messageCreate', async (message) => {
         const musicData = getGuildMusic(guildId);
 
         // Connect to voice if not already connected
-        if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+        const connState = musicData.connection ? musicData.connection.state.status : null;
+        if (!musicData.connection || connState === VoiceConnectionStatus.Disconnected || connState === VoiceConnectionStatus.Destroyed) {
             musicData.connection = joinVoiceChannel({
                 channelId: message.member.voice.channel.id,
                 guildId: message.guild.id,
                 adapterCreator: message.guild.voiceAdapterCreator,
+            });
+
+            // Listen for destroyed state to nullify
+            musicData.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                musicData.connection = null;
             });
         }
 
@@ -308,11 +320,17 @@ client.on('messageCreate', async (message) => {
             const musicData = getGuildMusic(guildId);
 
             // Connect to voice if not already connected
-            if (!musicData.connection || musicData.connection.state.status === VoiceConnectionStatus.Disconnected) {
+            const connState = musicData.connection ? musicData.connection.state.status : null;
+            if (!musicData.connection || connState === VoiceConnectionStatus.Disconnected || connState === VoiceConnectionStatus.Destroyed) {
                 musicData.connection = joinVoiceChannel({
                     channelId: message.member.voice.channel.id,
                     guildId: message.guild.id,
                     adapterCreator: message.guild.voiceAdapterCreator,
+                });
+
+                // Listen for destroyed state to nullify
+                musicData.connection.on(VoiceConnectionStatus.Destroyed, () => {
+                    musicData.connection = null;
                 });
             }
 
