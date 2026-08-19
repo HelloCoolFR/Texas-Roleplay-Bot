@@ -23,6 +23,17 @@ const path = require('path');
 const TOKEN = process.env.DISCORD_TOKEN; // Set this in Render's Environment Variables!
 const PORT = process.env.PORT || 3000;
 const WAITING_ROOM_NAME = "Waiting"; // The voice channel players must be in initially
+
+// Configure FFmpeg binary path for prism-media
+try {
+    const ffmpeg = require('ffmpeg-static');
+    if (ffmpeg) {
+        process.env.FFMPEG_PATH = ffmpeg;
+        console.log(`[Music] FFmpeg path configured to: ${ffmpeg}`);
+    }
+} catch (e) {
+    console.error("[Music Warning] ffmpeg-static load failed:", e);
+}
 const MUSIC_DIR = path.join(__dirname, 'my_music'); // Folder for local MP3s
 
 // Ensure music directory exists
