@@ -322,9 +322,24 @@ async function playNext(guildId) {
     }
 }
 
-// --- MESSAGE & COMMAND HANDLER ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+    if (!message.guild) return; // Command must be in a server
+
+    // Only allow users who share a role with the bot (excluding @everyone) to execute commands
+    const botMember = message.guild.members.me || await message.guild.members.fetch(client.user.id);
+    const member = message.member || await message.guild.members.fetch(message.author.id);
+
+    if (botMember && member) {
+        const botRoleIds = botMember.roles.cache.filter(r => r.id !== message.guild.id).map(r => r.id);
+        const hasSharedRole = member.roles.cache.some(r => botRoleIds.includes(r.id));
+        
+        // If the user has none of the bot's roles, ignore their commands
+        // Check prefix trigger (!) to filter command intents
+        if (message.content.startsWith('!') && !hasSharedRole) {
+            return message.reply("❌ You do not have the required role to run this bot's commands.");
+        }
+    }
 
     if (message.content === '!start-vocals' || message.content === '/start-vocals') {
         if (!message.member.permissions.has('ManageChannels')) {
